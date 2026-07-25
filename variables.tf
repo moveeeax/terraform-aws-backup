@@ -15,7 +15,18 @@ variable "plan_name" {
 }
 
 variable "rules" {
-  description = "List of backup rules that make up the plan."
+  description = <<-EOT
+    List of backup rules that make up the plan.
+
+    * `schedule` must be an AWS schedule expression: a six-field `cron(min hour
+      day-of-month month day-of-week year)` or `rate(value unit)`. Five-field
+      UNIX cron is rejected by AWS.
+    * `start_window` is in minutes and must be at least 60.
+    * `completion_window` is in minutes and must be greater than `start_window`.
+    * `cold_storage_after` is optional. When set, `delete_after` must be at
+      least `cold_storage_after + 90`, because AWS Backup keeps a recovery
+      point in cold storage for a minimum of 90 days.
+  EOT
   type = list(object({
     rule_name          = string
     schedule           = string
@@ -28,6 +39,51 @@ variable "rules" {
   validation {
     condition     = length(var.rules) > 0
     error_message = "At least one backup rule must be provided."
+  }
+
+  validation {
+    condition     = length(distinct([for r in var.rules : r.rule_name])) == length(var.rules)
+    error_message = "Each rule_name must be unique within a backup plan."
+  }
+
+  validation {
+    condition = alltrue([
+      for r in var.rules :
+      can(regex("^cron\\([^ )]+( [^ )]+){5}\\)$", r.schedule)) ||
+      can(regex("^rate\\([1-9][0-9]* (minute|minutes|hour|hours|day|days)\\)$", r.schedule))
+    ])
+    error_message = "Each schedule must be a six-field cron() expression such as \"cron(0 5 * * ? *)\" or a rate() expression such as \"rate(12 hours)\"."
+  }
+
+  validation {
+    condition     = alltrue([for r in var.rules : r.start_window >= 60])
+    error_message = "start_window must be at least 60 minutes; AWS Backup rejects shorter backup windows."
+  }
+
+  validation {
+    condition     = alltrue([for r in var.rules : r.completion_window > r.start_window])
+    error_message = "completion_window must be greater than start_window."
+  }
+
+  validation {
+    condition     = alltrue([for r in var.rules : r.delete_after == null || r.delete_after >= 1])
+    error_message = "delete_after must be at least 1 day when set."
+  }
+
+  validation {
+    condition = alltrue([
+      for r in var.rules :
+      r.cold_storage_after == null || r.cold_storage_after >= 1
+    ])
+    error_message = "cold_storage_after must be at least 1 day when set."
+  }
+
+  validation {
+    condition = alltrue([
+      for r in var.rules :
+      r.cold_storage_after == null || (r.delete_after != null && r.delete_after >= r.cold_storage_after + 90)
+    ])
+    error_message = "When cold_storage_after is set, delete_after must be at least cold_storage_after + 90 days. AWS Backup enforces a 90 day minimum in cold storage and rejects the plan at apply time otherwise."
   }
 }
 

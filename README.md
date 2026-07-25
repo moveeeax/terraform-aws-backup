@@ -31,6 +31,36 @@ module "backup" {
 
 A runnable example lives in [`examples/basic`](examples/basic).
 
+### Cold storage
+
+A rule may transition recovery points to cold storage before deleting them.
+AWS Backup keeps a recovery point in cold storage for a minimum of 90 days, so
+`delete_after` must be at least `cold_storage_after + 90`:
+
+```hcl
+rules = [
+  {
+    rule_name          = "monthly"
+    schedule           = "cron(0 5 1 * ? *)"
+    cold_storage_after = 30
+    delete_after       = 120 # 30 + 90
+  }
+]
+```
+
+### Rule validation
+
+The module validates rules at plan time so that a mistake surfaces before
+`CreateBackupPlan` rejects it mid-apply:
+
+- `rules` must be non-empty and every `rule_name` must be unique.
+- `schedule` must be a six-field `cron(...)` or a `rate(...)` expression.
+  Five-field UNIX cron such as `cron(0 5 * * ?)` is rejected.
+- `start_window` must be at least 60 minutes and `completion_window` must be
+  greater than `start_window`.
+- `cold_storage_after`, when set, must be at least 1 and `delete_after` must be
+  at least `cold_storage_after + 90`.
+
 ## Requirements
 
 | Name      | Version  |
@@ -57,6 +87,19 @@ A runnable example lives in [`examples/basic`](examples/basic).
 | `plan_id`      | ID of the backup plan.                             |
 | `plan_arn`     | ARN of the backup plan.                            |
 | `plan_version` | Unique version identifier of the backup plan.      |
+
+## Development
+
+```sh
+terraform fmt -recursive
+terraform init -backend=false && terraform validate
+terraform test          # requires Terraform >= 1.7 for mock_provider
+tflint --recursive
+```
+
+`tests/` uses `mock_provider "aws" {}`, so the suite runs with no AWS
+credentials and no network. The module's own `required_version` stays at
+`>= 1.5`; only the test suite needs 1.7.
 
 ## License
 
