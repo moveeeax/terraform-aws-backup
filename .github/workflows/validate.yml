@@ -24,8 +24,23 @@ jobs:
       - name: validate
         run: tofu validate
 
+      - name: test
+        run: tofu test
+
       - name: validate example
         working-directory: examples/basic
         run: |
           tofu init -backend=false
           tofu validate
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: terraform-linters/setup-tflint@v4
+
+      - name: tflint
+        run: |
+          tflint --init
+          tflint --recursive
