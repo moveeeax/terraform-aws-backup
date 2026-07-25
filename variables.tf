@@ -21,6 +21,9 @@ variable "rules" {
     * `schedule` must be an AWS schedule expression: a six-field `cron(min hour
       day-of-month month day-of-week year)` or `rate(value unit)`. Five-field
       UNIX cron is rejected by AWS.
+    * In a `cron()` expression at least one of day-of-month and day-of-week
+      must be `?`. AWS cannot honour both at once and rejects, for example,
+      `cron(0 5 * * * *)`.
     * `start_window` is in minutes and must be at least 60.
     * `completion_window` is in minutes and must be greater than `start_window`.
     * `cold_storage_after` is optional. When set, `delete_after` must be at
@@ -53,6 +56,20 @@ variable "rules" {
       can(regex("^rate\\([1-9][0-9]* (minute|minutes|hour|hours|day|days)\\)$", r.schedule))
     ])
     error_message = "Each schedule must be a six-field cron() expression such as \"cron(0 5 * * ? *)\" or a rate() expression such as \"rate(12 hours)\"."
+  }
+
+  # AWS cannot evaluate day-of-month and day-of-week at the same time, so one of
+  # them has to be "?". The AWS provider does not catch this — it surfaces only
+  # when CreateBackupPlan rejects the schedule mid-apply. Appending a year field
+  # to a five-field UNIX cron produces exactly this shape, e.g. cron(0 5 * * * *).
+  validation {
+    condition = alltrue([
+      for r in var.rules :
+      !can(regex("^cron\\(", r.schedule)) ||
+      can(regex("^cron\\([^ )]+ [^ )]+ \\? [^ )]+ [^ )]+ [^ )]+\\)$", r.schedule)) ||
+      can(regex("^cron\\([^ )]+ [^ )]+ [^ )]+ [^ )]+ \\? [^ )]+\\)$", r.schedule))
+    ])
+    error_message = "In a cron() schedule at least one of day-of-month (field 3) and day-of-week (field 5) must be \"?\". AWS rejects expressions such as \"cron(0 5 * * * *)\"; use \"cron(0 5 * * ? *)\" to run every day, or \"cron(0 5 ? * MON *)\" to run every Monday."
   }
 
   validation {
