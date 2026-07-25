@@ -126,6 +126,50 @@ run "rejects_five_field_unix_cron" {
   expect_failures = [var.rules]
 }
 
+# A cron() schedule may pin day-of-week instead of day-of-month, as long as the
+# other field is "?".
+run "day_of_week_schedules_are_accepted" {
+  command = plan
+
+  variables {
+    rules = [
+      { rule_name = "weekly", schedule = "cron(0 5 ? * MON *)" },
+    ]
+  }
+
+  assert {
+    condition     = one(aws_backup_plan.this.rule).schedule == "cron(0 5 ? * MON *)"
+    error_message = "A cron() schedule that pins day-of-week should be accepted unchanged."
+  }
+}
+
+# Appending a year field to five-field UNIX cron yields six fields with "*" in
+# both day-of-month and day-of-week. AWS cannot honour both and rejects the plan
+# at CreateBackupPlan time, so it must be caught here instead.
+run "rejects_cron_without_question_mark_day_field" {
+  command = plan
+
+  variables {
+    rules = [
+      { rule_name = "daily", schedule = "cron(0 5 * * * *)" },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "rejects_cron_with_two_concrete_day_fields" {
+  command = plan
+
+  variables {
+    rules = [
+      { rule_name = "daily", schedule = "cron(0 5 1 * MON *)" },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
 run "rejects_non_schedule_expression" {
   command = plan
 

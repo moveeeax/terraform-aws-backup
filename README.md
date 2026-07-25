@@ -56,6 +56,11 @@ The module validates rules at plan time so that a mistake surfaces before
 - `rules` must be non-empty and every `rule_name` must be unique.
 - `schedule` must be a six-field `cron(...)` or a `rate(...)` expression.
   Five-field UNIX cron such as `cron(0 5 * * ?)` is rejected.
+- In a `cron(...)` expression at least one of day-of-month (field 3) and
+  day-of-week (field 5) must be `?`. AWS cannot evaluate both at once, so
+  `cron(0 5 * * * *)` — five-field UNIX cron with a year appended — is
+  rejected. Use `cron(0 5 * * ? *)` for daily or `cron(0 5 ? * MON *)` for
+  weekly.
 - `start_window` must be at least 60 minutes and `completion_window` must be
   greater than `start_window`.
 - `cold_storage_after`, when set, must be at least 1 and `delete_after` must be
