@@ -1,6 +1,11 @@
 variable "vault_name" {
   description = "Name of the backup vault."
   type        = string
+
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9_-]{2,50}$", var.vault_name))
+    error_message = "vault_name must be 2-50 characters and contain only letters, numbers, hyphens and underscores. AWS Backup rejects any other character (including periods, which are allowed in plan and rule names but not vault names) when creating the vault."
+  }
 }
 
 variable "kms_key_arn" {
@@ -12,18 +17,28 @@ variable "kms_key_arn" {
 variable "plan_name" {
   description = "Name of the backup plan."
   type        = string
+
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9_.-]{1,50}$", var.plan_name))
+    error_message = "plan_name must be 1-50 characters and contain only letters, numbers, hyphens, underscores and periods; AWS Backup rejects any other character."
+  }
 }
 
 variable "rules" {
   description = <<-EOT
     List of backup rules that make up the plan.
 
+    * `rule_name` must be 1-50 characters: letters, numbers, hyphens,
+      underscores and periods only.
     * `schedule` must be an AWS schedule expression: a six-field `cron(min hour
       day-of-month month day-of-week year)` or `rate(value unit)`. Five-field
       UNIX cron is rejected by AWS.
     * In a `cron()` expression at least one of day-of-month and day-of-week
       must be `?`. AWS cannot honour both at once and rejects, for example,
       `cron(0 5 * * * *)`.
+    * In a `rate()` expression the unit must be singular when the value is 1
+      (`rate(1 hour)`) and plural otherwise (`rate(5 hours)`). AWS rejects the
+      mismatched forms `rate(1 hours)` and `rate(5 hour)`.
     * `start_window` is in minutes and must be at least 60.
     * `completion_window` is in minutes and must be greater than `start_window`.
     * `cold_storage_after` is optional. When set, `delete_after` must be at
@@ -51,11 +66,25 @@ variable "rules" {
 
   validation {
     condition = alltrue([
+      for r in var.rules : can(regex("^[a-zA-Z0-9_.-]{1,50}$", r.rule_name))
+    ])
+    error_message = "Each rule_name must be 1-50 characters and contain only letters, numbers, hyphens, underscores and periods; AWS Backup rejects any other character."
+  }
+
+  # The rate() alternatives are split by value so that unit agreement can be
+  # enforced: AWS requires a singular unit only when the value is exactly 1
+  # ("rate(1 hour)") and a plural unit for every other value ("rate(5 hours)").
+  # A single combined character class can't express that distinction, and the
+  # mismatched forms ("rate(1 hours)", "rate(5 hour)") pass CreateBackupPlan
+  # request validation only to be rejected by the service itself.
+  validation {
+    condition = alltrue([
       for r in var.rules :
       can(regex("^cron\\([^ )]+( [^ )]+){5}\\)$", r.schedule)) ||
-      can(regex("^rate\\([1-9][0-9]* (minute|minutes|hour|hours|day|days)\\)$", r.schedule))
+      can(regex("^rate\\(1 (minute|hour|day)\\)$", r.schedule)) ||
+      can(regex("^rate\\((?:[2-9][0-9]*|1[0-9]+) (minutes|hours|days)\\)$", r.schedule))
     ])
-    error_message = "Each schedule must be a six-field cron() expression such as \"cron(0 5 * * ? *)\" or a rate() expression such as \"rate(12 hours)\"."
+    error_message = "Each schedule must be a six-field cron() expression such as \"cron(0 5 * * ? *)\" or a rate() expression such as \"rate(12 hours)\". In rate(), the unit must be singular when the value is 1 (\"rate(1 hour)\") and plural otherwise (\"rate(5 hours)\")."
   }
 
   # AWS cannot evaluate day-of-month and day-of-week at the same time, so one of

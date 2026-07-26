@@ -259,3 +259,112 @@ run "rejects_zero_cold_storage_after" {
 
   expect_failures = [var.rules]
 }
+
+# AWS requires a singular unit only when the rate() value is exactly 1.
+run "accepts_singular_rate_with_value_one" {
+  command = plan
+
+  variables {
+    rules = [
+      { rule_name = "hourly", schedule = "rate(1 hour)" },
+    ]
+  }
+
+  assert {
+    condition     = one(aws_backup_plan.this.rule).schedule == "rate(1 hour)"
+    error_message = "rate(1 hour) should be accepted unchanged."
+  }
+}
+
+run "rejects_plural_rate_with_value_one" {
+  command = plan
+
+  variables {
+    rules = [
+      { rule_name = "hourly", schedule = "rate(1 hours)" },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "rejects_singular_rate_with_value_greater_than_one" {
+  command = plan
+
+  variables {
+    rules = [
+      { rule_name = "daily", schedule = "rate(5 hour)" },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "accepts_plural_rate_with_two_digit_value" {
+  command = plan
+
+  variables {
+    rules = [
+      { rule_name = "twice-daily", schedule = "rate(10 hours)" },
+    ]
+  }
+
+  assert {
+    condition     = one(aws_backup_plan.this.rule).schedule == "rate(10 hours)"
+    error_message = "rate(10 hours) should be accepted unchanged."
+  }
+}
+
+run "rejects_rule_name_with_invalid_characters" {
+  command = plan
+
+  variables {
+    rules = [
+      { rule_name = "daily backup!", schedule = "cron(0 5 * * ? *)" },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "rejects_rule_name_too_long" {
+  command = plan
+
+  variables {
+    rules = [
+      { rule_name = join("", [for i in range(51) : "a"]), schedule = "cron(0 5 * * ? *)" },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "rejects_vault_name_too_short" {
+  command = plan
+
+  variables {
+    vault_name = "a"
+  }
+
+  expect_failures = [var.vault_name]
+}
+
+run "rejects_vault_name_with_period" {
+  command = plan
+
+  variables {
+    vault_name = "prod.vault"
+  }
+
+  expect_failures = [var.vault_name]
+}
+
+run "rejects_plan_name_with_invalid_characters" {
+  command = plan
+
+  variables {
+    plan_name = "prod plan"
+  }
+
+  expect_failures = [var.plan_name]
+}
