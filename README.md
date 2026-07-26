@@ -53,6 +53,10 @@ rules = [
 The module validates rules at plan time so that a mistake surfaces before
 `CreateBackupPlan` rejects it mid-apply:
 
+- `vault_name` must be 2-50 characters: letters, numbers, hyphens and
+  underscores only (AWS Backup does not allow periods in vault names).
+- `plan_name` and each `rule_name` must be 1-50 characters: letters, numbers,
+  hyphens, underscores and periods.
 - `rules` must be non-empty and every `rule_name` must be unique.
 - `schedule` must be a six-field `cron(...)` or a `rate(...)` expression.
   Five-field UNIX cron such as `cron(0 5 * * ?)` is rejected.
@@ -61,6 +65,9 @@ The module validates rules at plan time so that a mistake surfaces before
   `cron(0 5 * * * *)` — five-field UNIX cron with a year appended — is
   rejected. Use `cron(0 5 * * ? *)` for daily or `cron(0 5 ? * MON *)` for
   weekly.
+- In a `rate(...)` expression the unit must be singular when the value is 1
+  (`rate(1 hour)`) and plural otherwise (`rate(5 hours)`). AWS rejects
+  `rate(1 hours)` and `rate(5 hour)`.
 - `start_window` must be at least 60 minutes and `completion_window` must be
   greater than `start_window`.
 - `cold_storage_after`, when set, must be at least 1 and `delete_after` must be
