@@ -44,6 +44,20 @@ variable "rules" {
     * `cold_storage_after` is optional. When set, `delete_after` must be at
       least `cold_storage_after + 90`, because AWS Backup keeps a recovery
       point in cold storage for a minimum of 90 days.
+    * `schedule_expression_timezone` is an IANA time zone name such as
+      `Europe/Berlin`. Null leaves the AWS default, `Etc/UTC`.
+    * `enable_continuous_backup` turns on continuous backup (point-in-time
+      recovery) for resources that support it. AWS keeps continuous backups
+      for at most 35 days and cannot move them to cold storage, so
+      `delete_after` must be 35 or less (the default 30 fits) and
+      `cold_storage_after` must be null.
+    * `recovery_point_tags` are added to every recovery point the rule
+      creates.
+    * `copy_actions` copy each recovery point to another vault, for example
+      in a second region or account. `destination_vault_arn` must be a
+      backup vault ARN. `delete_after` and `cold_storage_after` set the
+      retention of the copy and follow the same rules as the rule's own
+      values; leave both null to send the copy without a lifecycle.
   EOT
   type = list(object({
     rule_name          = string
@@ -52,6 +66,16 @@ variable "rules" {
     completion_window  = optional(number, 180)
     delete_after       = optional(number, 30)
     cold_storage_after = optional(number, null)
+
+    schedule_expression_timezone = optional(string, null)
+    enable_continuous_backup     = optional(bool, false)
+    recovery_point_tags          = optional(map(string), {})
+
+    copy_actions = optional(list(object({
+      destination_vault_arn = string
+      delete_after          = optional(number, null)
+      cold_storage_after    = optional(number, null)
+    })), [])
   }))
 
   validation {
@@ -130,6 +154,63 @@ variable "rules" {
       r.cold_storage_after == null || (r.delete_after != null && r.delete_after >= r.cold_storage_after + 90)
     ])
     error_message = "When cold_storage_after is set, delete_after must be at least cold_storage_after + 90 days. AWS Backup enforces a 90 day minimum in cold storage and rejects the plan at apply time otherwise."
+  }
+
+  validation {
+    condition = alltrue([
+      for r in var.rules :
+      r.schedule_expression_timezone == null || can(regex("^[A-Za-z0-9_+/-]+$", r.schedule_expression_timezone))
+    ])
+    error_message = "schedule_expression_timezone must be an IANA time zone name such as \"Europe/Berlin\" or \"Etc/UTC\", or null for the AWS default (Etc/UTC)."
+  }
+
+  # Continuous backup (point-in-time recovery) keeps recovery points for at most
+  # 35 days and never transitions them to cold storage, which needs a 90 day
+  # minimum. AWS rejects both cases when it creates the plan.
+  validation {
+    condition = alltrue([
+      for r in var.rules :
+      !r.enable_continuous_backup || r.delete_after <= 35
+    ])
+    error_message = "When enable_continuous_backup is true, delete_after must be 35 days or less. AWS Backup retains continuous backups for at most 35 days."
+  }
+
+  validation {
+    condition = alltrue([
+      for r in var.rules :
+      !r.enable_continuous_backup || r.cold_storage_after == null
+    ])
+    error_message = "When enable_continuous_backup is true, cold_storage_after must be null. AWS Backup does not move continuous backups to cold storage."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for r in var.rules : [
+        for c in r.copy_actions :
+        can(regex("^arn:aws[a-z-]*:backup:[a-z0-9-]+:[0-9]{12}:backup-vault:[a-zA-Z0-9_-]{2,50}$", c.destination_vault_arn))
+      ]
+    ]))
+    error_message = "Each copy_actions destination_vault_arn must be a backup vault ARN such as \"arn:aws:backup:eu-west-1:123456789012:backup-vault:dr-vault\"."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for r in var.rules : [
+        for c in r.copy_actions :
+        (c.delete_after == null || c.delete_after >= 1) && (c.cold_storage_after == null || c.cold_storage_after >= 1)
+      ]
+    ]))
+    error_message = "In copy_actions, delete_after and cold_storage_after must be at least 1 day when set."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for r in var.rules : [
+        for c in r.copy_actions :
+        c.cold_storage_after == null || (c.delete_after != null && c.delete_after >= c.cold_storage_after + 90)
+      ]
+    ]))
+    error_message = "In copy_actions, when cold_storage_after is set, delete_after must be at least cold_storage_after + 90 days. AWS Backup enforces a 90 day minimum in cold storage for copies too."
   }
 }
 
