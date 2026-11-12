@@ -48,6 +48,59 @@ rules = [
 ]
 ```
 
+### Copies to another vault
+
+`copy_actions` copies every recovery point of a rule to another backup vault,
+for example one in a second region or in a separate account for disaster
+recovery. Each copy can have its own retention; the cold storage rule
+(`delete_after >= cold_storage_after + 90`) applies to copies too. Leave both
+retention values null to send the copy action without a lifecycle.
+
+```hcl
+rules = [
+  {
+    rule_name = "daily"
+    schedule  = "cron(0 5 * * ? *)"
+
+    copy_actions = [
+      {
+        destination_vault_arn = "arn:aws:backup:eu-west-1:123456789012:backup-vault:dr-vault"
+        delete_after          = 90
+      }
+    ]
+  }
+]
+```
+
+The destination vault has to exist already, and for a cross-account copy its
+access policy and the AWS Organizations backup settings have to allow it; this
+module does not manage either.
+
+### Continuous backup and other rule settings
+
+`enable_continuous_backup = true` turns on continuous backup (point-in-time
+recovery) for resources that support it, such as RDS and S3. AWS keeps
+continuous backups for at most 35 days and does not move them to cold storage,
+so such a rule needs `delete_after <= 35` (the default 30 fits) and no
+`cold_storage_after`:
+
+```hcl
+rules = [
+  {
+    rule_name                    = "pitr"
+    schedule                     = "cron(0 5 * * ? *)"
+    schedule_expression_timezone = "Europe/Berlin"
+    enable_continuous_backup     = true
+    delete_after                 = 35
+    recovery_point_tags          = { Backup = "pitr" }
+  }
+]
+```
+
+`schedule_expression_timezone` takes an IANA time zone name; when null AWS
+evaluates the schedule in `Etc/UTC`. `recovery_point_tags` are added to every
+recovery point the rule creates.
+
 ### Rule validation
 
 The module validates rules at plan time so that a mistake surfaces before
@@ -72,13 +125,25 @@ The module validates rules at plan time so that a mistake surfaces before
   greater than `start_window`.
 - `cold_storage_after`, when set, must be at least 1 and `delete_after` must be
   at least `cold_storage_after + 90`.
+- With `enable_continuous_backup = true`, `delete_after` must be at most 35
+  and `cold_storage_after` must be null.
+- Each `copy_actions` entry needs a backup vault ARN
+  (`arn:aws:backup:<region>:<account>:backup-vault:<name>`); its
+  `delete_after` and `cold_storage_after` follow the same limits as the rule's.
+- `schedule_expression_timezone`, when set, must look like an IANA zone name
+  (letters, digits, `_`, `+`, `-`, `/`). The module does not check it against
+  the zone list.
 
 ## Requirements
 
 | Name      | Version  |
 |-----------|----------|
 | terraform | >= 1.5   |
-| aws       | >= 5.0   |
+| aws       | >= 5.72  |
+
+The provider gained `rule.schedule_expression_timezone` in 5.71.0, which is
+not published in the registry, so 5.72.0 is the oldest release the module runs
+with.
 
 ## Inputs
 

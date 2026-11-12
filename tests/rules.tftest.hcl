@@ -368,3 +368,244 @@ run "rejects_plan_name_with_invalid_characters" {
 
   expect_failures = [var.plan_name]
 }
+
+run "new_rule_arguments_default_to_off" {
+  command = plan
+
+  assert {
+    condition     = one(aws_backup_plan.this.rule).enable_continuous_backup == false
+    error_message = "enable_continuous_backup should default to false."
+  }
+
+  assert {
+    condition     = length(one(aws_backup_plan.this.rule).copy_action) == 0
+    error_message = "A rule without copy_actions should render no copy_action blocks."
+  }
+
+  assert {
+    condition     = one(aws_backup_plan.this.rule).schedule_expression_timezone == null
+    error_message = "schedule_expression_timezone should stay null so AWS applies its Etc/UTC default."
+  }
+}
+
+run "copy_action_with_lifecycle_is_rendered" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        rule_name                    = "daily"
+        schedule                     = "cron(0 5 * * ? *)"
+        schedule_expression_timezone = "Europe/Berlin"
+        recovery_point_tags          = { Source = "terraform" }
+        copy_actions = [
+          {
+            destination_vault_arn = "arn:aws:backup:eu-west-1:123456789012:backup-vault:dr-vault"
+            cold_storage_after    = 30
+            delete_after          = 120
+          },
+        ]
+      },
+    ]
+  }
+
+  assert {
+    condition     = one(one(aws_backup_plan.this.rule).copy_action).destination_vault_arn == "arn:aws:backup:eu-west-1:123456789012:backup-vault:dr-vault"
+    error_message = "destination_vault_arn should be passed through to copy_action."
+  }
+
+  assert {
+    condition     = one(one(one(aws_backup_plan.this.rule).copy_action).lifecycle).delete_after == 120
+    error_message = "Copy delete_after should be passed through to the copy_action lifecycle."
+  }
+
+  assert {
+    condition     = one(one(one(aws_backup_plan.this.rule).copy_action).lifecycle).cold_storage_after == 30
+    error_message = "Copy cold_storage_after should be passed through to the copy_action lifecycle."
+  }
+
+  assert {
+    condition     = one(aws_backup_plan.this.rule).schedule_expression_timezone == "Europe/Berlin"
+    error_message = "schedule_expression_timezone should be passed through."
+  }
+
+  assert {
+    condition     = one(aws_backup_plan.this.rule).recovery_point_tags["Source"] == "terraform"
+    error_message = "recovery_point_tags should be passed through."
+  }
+}
+
+run "copy_action_without_retention_has_no_lifecycle" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        rule_name = "daily"
+        schedule  = "cron(0 5 * * ? *)"
+        copy_actions = [
+          { destination_vault_arn = "arn:aws:backup:eu-west-1:123456789012:backup-vault:dr-vault" },
+        ]
+      },
+    ]
+  }
+
+  assert {
+    condition     = length(one(one(aws_backup_plan.this.rule).copy_action).lifecycle) == 0
+    error_message = "A copy action with no retention values should render no lifecycle block."
+  }
+}
+
+run "continuous_backup_within_35_days_is_accepted" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        rule_name                = "pitr"
+        schedule                 = "cron(0 5 * * ? *)"
+        enable_continuous_backup = true
+        delete_after             = 35
+      },
+    ]
+  }
+
+  assert {
+    condition     = one(aws_backup_plan.this.rule).enable_continuous_backup == true
+    error_message = "enable_continuous_backup should be passed through."
+  }
+}
+
+run "rejects_continuous_backup_over_35_days" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        rule_name                = "pitr"
+        schedule                 = "cron(0 5 * * ? *)"
+        enable_continuous_backup = true
+        delete_after             = 36
+      },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+# delete_after defaults to 30, which is inside the 35 day continuous backup
+# limit, so enabling continuous backup needs no other change to the rule.
+run "continuous_backup_with_default_delete_after_is_accepted" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        rule_name                = "pitr"
+        schedule                 = "cron(0 5 * * ? *)"
+        enable_continuous_backup = true
+      },
+    ]
+  }
+
+  assert {
+    condition     = one(one(aws_backup_plan.this.rule).lifecycle).delete_after == 30
+    error_message = "A continuous backup rule should keep the 30 day delete_after default."
+  }
+}
+
+run "rejects_continuous_backup_with_cold_storage" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        rule_name                = "pitr"
+        schedule                 = "cron(0 5 * * ? *)"
+        enable_continuous_backup = true
+        cold_storage_after       = 1
+        delete_after             = 35
+      },
+    ]
+  }
+
+  # Also trips the cold_storage_after + 90 check; both are reported on var.rules.
+  expect_failures = [var.rules]
+}
+
+run "rejects_copy_action_with_non_vault_arn" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        rule_name = "daily"
+        schedule  = "cron(0 5 * * ? *)"
+        copy_actions = [
+          { destination_vault_arn = "dr-vault" },
+        ]
+      },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "rejects_copy_action_cold_storage_without_90_day_gap" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        rule_name = "daily"
+        schedule  = "cron(0 5 * * ? *)"
+        copy_actions = [
+          {
+            destination_vault_arn = "arn:aws:backup:eu-west-1:123456789012:backup-vault:dr-vault"
+            cold_storage_after    = 30
+            delete_after          = 100
+          },
+        ]
+      },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "rejects_copy_action_zero_delete_after" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        rule_name = "daily"
+        schedule  = "cron(0 5 * * ? *)"
+        copy_actions = [
+          {
+            destination_vault_arn = "arn:aws:backup:eu-west-1:123456789012:backup-vault:dr-vault"
+            delete_after          = 0
+          },
+        ]
+      },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "rejects_timezone_with_spaces" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        rule_name                    = "daily"
+        schedule                     = "cron(0 5 * * ? *)"
+        schedule_expression_timezone = "Central European Time"
+      },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
